@@ -14,7 +14,7 @@ debug:
 # Run with an image file
 # Usage: make run IMG=path/to/image.png
 run: release
-	./zig-out/bin/zCrop $(IMG)
+	./zig-out/bin/zcrop $(IMG)
 
 # Run tests
 test:
@@ -26,4 +26,4 @@ clean:
 
 # Install to ~/.local/bin
 install: release
-	cp zig-out/bin/zCrop ~/.local/bin/
+	cp zig-out/bin/zcrop ~/.local/bin/

@@ -116,7 +116,7 @@ pub fn main() !void {
 
     if (args.len < 2) {
         std.debug.print(
-            \\Usage: zCrop <image_file>
+            \\Usage: zcrop <image_file>
             \\
             \\Controls:
             \\  Mouse drag    - Draw/resize crop area
@@ -146,7 +146,7 @@ pub fn main() !void {
     const window_height = @min(@as(i32, @intCast(img.height)) + 80, max_window);
 
     var rend = Renderer.init(
-        "zCrop - Press Enter to crop, Escape to quit",
+        "zcrop - Press Enter to crop, Escape to quit",
         window_width,
         window_height,
     ) catch |err| {

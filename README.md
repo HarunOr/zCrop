@@ -51,9 +51,9 @@ zig build run -- path/to/image.png  # Build and run
 ## Usage
 
 ```bash
-zCrop image.png
+zcrop image.png
 # or
-./zig-out/bin/zCrop image.png
+./zig-out/bin/zcrop image.png
 ```
 
 ### Controls
