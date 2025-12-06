@@ -1,6 +1,10 @@
 # zCrop
 
 A simple image cropping tool built with Zig.
+And C libraries. Ok, it's mostly C.
+
+![zCrop Demo](zCrop-demo.png)
+*A cropped image of an image demonstrating how to crop an image with zCrop.*
 
 ## Features
 

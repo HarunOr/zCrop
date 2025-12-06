@@ -8,6 +8,11 @@ const Renderer = renderer_module.Renderer;
 const InputEvent = renderer_module.InputEvent;
 const Key = renderer_module.Key;
 
+const SaveResult = union(enum) {
+    success: []const u8,
+    failure,
+};
+
 const AppState = struct {
     image: ?Image,
     crop_rect: Rect,
@@ -18,6 +23,11 @@ const AppState = struct {
     drag_initial_rect: Rect,
     file_path: ?[]const u8,
     allocator: std.mem.Allocator,
+    // Saving state
+    is_saving: bool,
+    save_thread: ?std.Thread,
+    save_result: ?SaveResult,
+    save_start_time: i64,
 
     const Self = @This();
 
@@ -32,6 +42,10 @@ const AppState = struct {
             .drag_initial_rect = Rect{ .x = 0, .y = 0, .width = 100, .height = 100 },
             .file_path = null,
             .allocator = allocator,
+            .is_saving = false,
+            .save_thread = null,
+            .save_result = null,
+            .save_start_time = 0,
         };
     }
 
@@ -98,6 +112,39 @@ const AppState = struct {
                 .height = @intCast(img.height),
             };
         }
+    }
+
+    pub fn startSaveThread(self: *Self) void {
+        self.is_saving = true;
+        self.save_result = null;
+        self.save_start_time = std.time.milliTimestamp();
+        self.save_thread = std.Thread.spawn(.{}, saveWorker, .{self}) catch null;
+    }
+
+    fn saveWorker(self: *Self) void {
+        const output_path = self.cropAndSave() catch {
+            self.save_result = .failure;
+            return;
+        };
+        self.save_result = .{ .success = output_path };
+    }
+
+    pub fn checkSaveComplete(self: *Self) ?SaveResult {
+        if (self.save_thread) |thread| {
+            if (self.save_result != null) {
+                thread.join();
+                self.save_thread = null;
+                self.is_saving = false;
+                return self.save_result;
+            }
+        }
+        return null;
+    }
+
+    pub fn getElapsedSaveTime(self: Self) u64 {
+        if (!self.is_saving) return 0;
+        const now = std.time.milliTimestamp();
+        return @intCast(now - self.save_start_time);
     }
 };
 
@@ -171,14 +218,10 @@ pub fn main() !void {
                             running = false;
                         },
                         .enter => {
-                            const output_path = state.cropAndSave() catch |err| {
-                                std.debug.print("Failed to save: {}\n", .{err});
-                                continue;
-                            };
-                            defer allocator.free(output_path);
-
-                            std.debug.print("Saved cropped image to: {s}\n", .{output_path});
-                            running = false;
+                            if (!state.is_saving) {
+                                rend.setStatus("zcrop - Saving...");
+                                state.startSaveThread();
+                            }
                         },
                         .r => {
                             state.resetCrop();
@@ -206,9 +249,31 @@ pub fn main() !void {
             }
         }
 
+        // Check if save completed
+        if (state.checkSaveComplete()) |result| {
+            switch (result) {
+                .success => |output_path| {
+                    std.debug.print("Saved cropped image to: {s}\n", .{output_path});
+                    rend.setStatus("zcrop - Saved!");
+                    allocator.free(output_path);
+                    running = false;
+                },
+                .failure => {
+                    std.debug.print("Failed to save image\n", .{});
+                    rend.setStatus("zcrop - Save failed!");
+                },
+            }
+        }
+
         rend.clear();
         rend.renderImage();
         rend.renderCropOverlay(state.crop_rect, state.is_dragging);
+
+        // Render loading spinner during save
+        if (state.is_saving) {
+            rend.renderLoadingCircle(state.getElapsedSaveTime());
+        }
+
         rend.present();
 
         std.Thread.sleep(1_000_000);

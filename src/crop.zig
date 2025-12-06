@@ -18,7 +18,7 @@ pub fn cropImage(allocator: Allocator, source: Image, region: Rect) CropError!Im
         return CropError.OutOfBounds;
     }
 
-    var dest = Image.create(allocator, bounds.width, bounds.height) catch return CropError.OutOfMemory;
+    var dest = Image.create(allocator, bounds.width, bounds.height, source.original_channels) catch return CropError.OutOfMemory;
     errdefer dest.deinit();
 
     const src_stride = source.width * 4;
@@ -100,7 +100,7 @@ pub fn constrainAspectRatio(rect: Rect, target_ratio: f32) Rect {
 test "cropImage creates correct dimensions" {
     const allocator = std.testing.allocator;
 
-    var source = try Image.create(allocator, 100, 100);
+    var source = try Image.create(allocator, 100, 100, 4);
     defer source.deinit();
 
     var y: u32 = 0;
@@ -131,7 +131,7 @@ test "cropImage creates correct dimensions" {
 test "cropImage returns error for out of bounds" {
     const allocator = std.testing.allocator;
 
-    var source = try Image.create(allocator, 100, 100);
+    var source = try Image.create(allocator, 100, 100, 4);
     defer source.deinit();
 
     const region = Rect{ .x = 80, .y = 80, .width = 50, .height = 50 };
@@ -143,7 +143,7 @@ test "cropImage returns error for out of bounds" {
 test "cropImage returns error for negative coordinates" {
     const allocator = std.testing.allocator;
 
-    var source = try Image.create(allocator, 100, 100);
+    var source = try Image.create(allocator, 100, 100, 4);
     defer source.deinit();
 
     const region = Rect{ .x = -10, .y = 10, .width = 50, .height = 50 };

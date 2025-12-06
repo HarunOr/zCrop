@@ -268,6 +268,49 @@ pub const Renderer = struct {
     pub fn present(self: Self) void {
         c.SDL_RenderPresent(self.renderer);
     }
+
+    pub fn renderLoadingCircle(self: Self, elapsed_ms: u64) void {
+        const center_x = @divFloor(self.window_width, 2);
+        const center_y = @divFloor(self.window_height, 2);
+        const radius: i32 = 40;
+        const segment_count: u32 = 12;
+        const segment_length: i32 = 12;
+        const segment_width: i32 = 4;
+
+        const rotation_period_ms: u64 = 1000;
+        const active_segment = @as(u32, @intCast((elapsed_ms % rotation_period_ms) * segment_count / rotation_period_ms));
+
+        var i: u32 = 0;
+        while (i < segment_count) : (i += 1) {
+            const segments_behind = (active_segment + segment_count - i) % segment_count;
+            const alpha: u8 = if (segments_behind < 4)
+                @as(u8, @intCast(255 - segments_behind * 50))
+            else
+                55;
+
+            const angle = @as(f32, @floatFromInt(i)) * (2.0 * std.math.pi / @as(f32, @floatFromInt(segment_count)));
+
+            const inner_x = center_x + @as(i32, @intFromFloat(@cos(angle) * @as(f32, @floatFromInt(radius - segment_length))));
+            const inner_y = center_y + @as(i32, @intFromFloat(@sin(angle) * @as(f32, @floatFromInt(radius - segment_length))));
+            const outer_x = center_x + @as(i32, @intFromFloat(@cos(angle) * @as(f32, @floatFromInt(radius))));
+            const outer_y = center_y + @as(i32, @intFromFloat(@sin(angle) * @as(f32, @floatFromInt(radius))));
+
+            _ = c.SDL_SetRenderDrawColor(self.renderer, 255, 200, 0, alpha);
+
+            var w: i32 = -@divFloor(segment_width, 2);
+            while (w <= @divFloor(segment_width, 2)) : (w += 1) {
+                const perp_x = @as(i32, @intFromFloat(-@sin(angle) * @as(f32, @floatFromInt(w))));
+                const perp_y = @as(i32, @intFromFloat(@cos(angle) * @as(f32, @floatFromInt(w))));
+                _ = c.SDL_RenderDrawLine(
+                    self.renderer,
+                    inner_x + perp_x,
+                    inner_y + perp_y,
+                    outer_x + perp_x,
+                    outer_y + perp_y,
+                );
+            }
+        }
+    }
 };
 
 pub const Key = enum {

@@ -11,6 +11,7 @@ pub const Image = struct {
     width: u32,
     height: u32,
     channels: u32,
+    original_channels: u32,
     allocator: Allocator,
     source: enum { zig_allocated, stb_allocated },
 
@@ -42,12 +43,13 @@ pub const Image = struct {
             .width = w,
             .height = h,
             .channels = 4,
+            .original_channels = @intCast(channels),
             .allocator = allocator,
             .source = .stb_allocated,
         };
     }
 
-    pub fn create(allocator: Allocator, width: u32, height: u32) !Self {
+    pub fn create(allocator: Allocator, width: u32, height: u32, original_channels: u32) !Self {
         const size = width * height * 4;
         const pixels = try allocator.alloc(u8, size);
         @memset(pixels, 0);
@@ -57,6 +59,7 @@ pub const Image = struct {
             .width = width,
             .height = height,
             .channels = 4,
+            .original_channels = original_channels,
             .allocator = allocator,
             .source = .zig_allocated,
         };
@@ -106,17 +109,72 @@ pub const Image = struct {
         const w: c_int = @intCast(self.width);
         const h: c_int = @intCast(self.height);
 
+        // Determine output channels (JPEG max 3, no alpha)
+        const is_jpeg = std.mem.endsWith(u8, path, ".jpg") or std.mem.endsWith(u8, path, ".jpeg");
+        const save_ch: u32 = if (is_jpeg) @min(self.original_channels, 3) else self.original_channels;
+
+        // Convert RGBA to target channel count
+        const converted = try self.allocator.alloc(u8, self.width * self.height * save_ch);
+        defer self.allocator.free(converted);
+
+        for (0..self.width * self.height) |i| {
+            for (0..save_ch) |ch| {
+                converted[i * save_ch + ch] = self.pixels[i * 4 + ch];
+            }
+        }
+
+        const ch: c_int = @intCast(save_ch);
+
+        // Set max PNG compression (default is 8, max is 9)
+        c.stbi_write_png_compression_level = 9;
+
         const result = if (std.mem.endsWith(u8, path, ".png"))
-            c.stbi_write_png(c_path.ptr, w, h, 4, self.pixels.ptr, w * 4)
-        else if (std.mem.endsWith(u8, path, ".jpg") or std.mem.endsWith(u8, path, ".jpeg"))
-            c.stbi_write_jpg(c_path.ptr, w, h, 4, self.pixels.ptr, 90)
+            c.stbi_write_png(c_path.ptr, w, h, ch, converted.ptr, w * ch)
+        else if (is_jpeg)
+            c.stbi_write_jpg(c_path.ptr, w, h, ch, converted.ptr, 80)
         else if (std.mem.endsWith(u8, path, ".bmp"))
-            c.stbi_write_bmp(c_path.ptr, w, h, 4, self.pixels.ptr)
+            c.stbi_write_bmp(c_path.ptr, w, h, ch, converted.ptr)
         else
             return error.UnsupportedFormat;
 
         if (result == 0) {
             return error.ImageSaveFailed;
+        }
+
+        // Try to optimize PNG with system tools (best-effort, ignore failures)
+        if (std.mem.endsWith(u8, path, ".png")) {
+            optimizePng(self.allocator, path);
+        }
+    }
+
+    fn optimizePng(allocator: Allocator, path: []const u8) void {
+        // Try oxipng first (best), then optipng, then pngcrush
+        const optimizers = [_]struct { cmd: []const u8, args: []const []const u8 }{
+            .{ .cmd = "oxipng", .args = &.{ "-o", "max", "-s", "-q" } },
+            .{ .cmd = "optipng", .args = &.{ "-o7", "-quiet" } },
+            .{ .cmd = "pngcrush", .args = &.{ "-q", "-ow" } },
+        };
+
+        for (optimizers) |opt| {
+            // Build argv array
+            var argv_buf: [8][]const u8 = undefined;
+            var argc: usize = 0;
+
+            argv_buf[argc] = opt.cmd;
+            argc += 1;
+            for (opt.args) |arg| {
+                if (argc < argv_buf.len - 1) {
+                    argv_buf[argc] = arg;
+                    argc += 1;
+                }
+            }
+            argv_buf[argc] = path;
+            argc += 1;
+
+            var child = std.process.Child.init(argv_buf[0..argc], allocator);
+            child.spawn() catch continue;
+            _ = child.wait() catch continue;
+            return; // Success with this optimizer
         }
     }
 
@@ -163,7 +221,7 @@ test "Color.fromHex creates correct color" {
 
 test "Image.create allocates correct size" {
     const allocator = std.testing.allocator;
-    var img = try Image.create(allocator, 100, 50);
+    var img = try Image.create(allocator, 100, 50, 4);
     defer img.deinit();
 
     try std.testing.expectEqual(@as(u32, 100), img.width);
@@ -173,7 +231,7 @@ test "Image.create allocates correct size" {
 
 test "Image.setPixel and getPixel roundtrip" {
     const allocator = std.testing.allocator;
-    var img = try Image.create(allocator, 10, 10);
+    var img = try Image.create(allocator, 10, 10, 4);
     defer img.deinit();
 
     const test_color = Color{ .r = 100, .g = 150, .b = 200, .a = 255 };
@@ -188,7 +246,7 @@ test "Image.setPixel and getPixel roundtrip" {
 
 test "Image.getPixel returns null for out of bounds" {
     const allocator = std.testing.allocator;
-    var img = try Image.create(allocator, 10, 10);
+    var img = try Image.create(allocator, 10, 10, 4);
     defer img.deinit();
 
     try std.testing.expect(img.getPixel(10, 0) == null);
