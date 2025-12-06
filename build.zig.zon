@@ -1,7 +1,7 @@
 .{
     .name = .zCrop,
     .version = "0.1.0",
-    .fingerprint = 0xb9c6edf41c4304af,
+    .fingerprint = 0x19f442cae96080a3,
     .minimum_zig_version = "0.15.0",
 
     .dependencies = .{},
