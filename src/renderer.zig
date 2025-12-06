@@ -17,8 +17,20 @@ pub const Renderer = struct {
     offset_x: i32,
     offset_y: i32,
     scale: f32,
+    // Zoom/pan state
+    user_scale: f32,
+    fit_scale: f32,
+    pan_x: f32,
+    pan_y: f32,
+    is_user_zoomed: bool,
 
     const Self = @This();
+
+    // Zoom constants
+    const MIN_SCALE: f32 = 0.1;
+    const MAX_SCALE: f32 = 10.0;
+    const ZOOM_STEP: f32 = 1.2;
+    pub const PAN_STEP: f32 = 50.0;
 
     pub fn init(title: [*:0]const u8, width: i32, height: i32) !Self {
         if (c.SDL_Init(c.SDL_INIT_VIDEO) != 0) {
@@ -55,6 +67,11 @@ pub const Renderer = struct {
             .offset_x = 0,
             .offset_y = 0,
             .scale = 1.0,
+            .user_scale = 1.0,
+            .fit_scale = 1.0,
+            .pan_x = 0.0,
+            .pan_y = 0.0,
+            .is_user_zoomed = false,
         };
     }
 
@@ -112,20 +129,124 @@ pub const Renderer = struct {
         const scale_y = @as(f32, @floatFromInt(available_height)) /
             @as(f32, @floatFromInt(self.image_height));
 
-        self.scale = @min(scale_x, scale_y);
-        self.scale = @min(self.scale, 1.0);
+        // Store fit scale (never upscale beyond 1.0 for fit)
+        self.fit_scale = @min(@min(scale_x, scale_y), 1.0);
 
-        const scaled_width: i32 = @intFromFloat(@as(f32, @floatFromInt(self.image_width)) * self.scale);
-        const scaled_height: i32 = @intFromFloat(@as(f32, @floatFromInt(self.image_height)) * self.scale);
+        // Use fit scale if user hasn't manually zoomed
+        if (!self.is_user_zoomed) {
+            self.scale = self.fit_scale;
+            self.pan_x = 0.0;
+            self.pan_y = 0.0;
+        } else {
+            self.scale = self.user_scale;
+        }
 
-        self.offset_x = @divFloor(self.window_width - scaled_width, 2);
-        self.offset_y = @divFloor(self.window_height - scaled_height, 2);
+        self.updateOffsets();
+    }
+
+    fn updateOffsets(self: *Self) void {
+        const scaled_width = @as(f32, @floatFromInt(self.image_width)) * self.scale;
+        const scaled_height = @as(f32, @floatFromInt(self.image_height)) * self.scale;
+
+        // Center the image, then apply pan offset
+        const base_x = (@as(f32, @floatFromInt(self.window_width)) - scaled_width) / 2.0;
+        const base_y = (@as(f32, @floatFromInt(self.window_height)) - scaled_height) / 2.0;
+
+        // Pan offset is in image pixels, convert to screen pixels
+        self.offset_x = @intFromFloat(base_x - self.pan_x * self.scale);
+        self.offset_y = @intFromFloat(base_y - self.pan_y * self.scale);
+    }
+
+    /// Zoom centered on a specific screen position
+    pub fn zoomAtPoint(self: *Self, screen_x: i32, screen_y: i32, zoom_in: bool) void {
+        // Get image coordinates under cursor before zoom
+        const img_pos = self.screenToImage(screen_x, screen_y);
+
+        // Calculate new scale
+        const factor = if (zoom_in) ZOOM_STEP else 1.0 / ZOOM_STEP;
+        const new_scale = std.math.clamp(self.scale * factor, MIN_SCALE, MAX_SCALE);
+
+        if (new_scale == self.scale) return; // At limit
+
+        self.user_scale = new_scale;
+        self.scale = new_scale;
+        self.is_user_zoomed = true;
+
+        // Calculate new pan to keep the same image point under cursor
+        // We want: screen_x = img_pos.x * scale + offset_x
+        // Where: offset_x = base_x - pan_x * scale
+        // So: pan_x = (base_x - (screen_x - img_pos.x * scale)) / scale
+        const scaled_width = @as(f32, @floatFromInt(self.image_width)) * self.scale;
+        const scaled_height = @as(f32, @floatFromInt(self.image_height)) * self.scale;
+        const base_x = (@as(f32, @floatFromInt(self.window_width)) - scaled_width) / 2.0;
+        const base_y = (@as(f32, @floatFromInt(self.window_height)) - scaled_height) / 2.0;
+
+        const target_offset_x = @as(f32, @floatFromInt(screen_x)) -
+            @as(f32, @floatFromInt(img_pos.x)) * self.scale;
+        const target_offset_y = @as(f32, @floatFromInt(screen_y)) -
+            @as(f32, @floatFromInt(img_pos.y)) * self.scale;
+
+        self.pan_x = (base_x - target_offset_x) / self.scale;
+        self.pan_y = (base_y - target_offset_y) / self.scale;
+
+        self.constrainPan();
+        self.updateOffsets();
+    }
+
+    /// Reset to fit-to-window view
+    pub fn resetZoom(self: *Self) void {
+        self.is_user_zoomed = false;
+        self.user_scale = 1.0;
+        self.pan_x = 0.0;
+        self.pan_y = 0.0;
+        self.calculateLayout();
+    }
+
+    /// Apply pan delta (in image pixels)
+    pub fn pan(self: *Self, delta_x: f32, delta_y: f32) void {
+        self.pan_x += delta_x;
+        self.pan_y += delta_y;
+        self.constrainPan();
+        self.updateOffsets();
+    }
+
+    /// Keep pan within reasonable bounds
+    fn constrainPan(self: *Self) void {
+        const scaled_width = @as(f32, @floatFromInt(self.image_width)) * self.scale;
+        const scaled_height = @as(f32, @floatFromInt(self.image_height)) * self.scale;
+        const window_w = @as(f32, @floatFromInt(self.window_width));
+        const window_h = @as(f32, @floatFromInt(self.window_height));
+
+        // Allow panning such that at least some of the image remains visible
+        const margin_x = @max(scaled_width * 0.1, 50.0);
+        const margin_y = @max(scaled_height * 0.1, 50.0);
+
+        const max_pan_x = (scaled_width + window_w) / 2.0 / self.scale - margin_x / self.scale;
+        const max_pan_y = (scaled_height + window_h) / 2.0 / self.scale - margin_y / self.scale;
+
+        self.pan_x = std.math.clamp(self.pan_x, -max_pan_x, max_pan_x);
+        self.pan_y = std.math.clamp(self.pan_y, -max_pan_y, max_pan_y);
+    }
+
+    /// Check if panning should be enabled (image larger than window)
+    pub fn canPan(self: Self) bool {
+        const scaled_width = @as(f32, @floatFromInt(self.image_width)) * self.scale;
+        const scaled_height = @as(f32, @floatFromInt(self.image_height)) * self.scale;
+        return scaled_width > @as(f32, @floatFromInt(self.window_width)) or
+            scaled_height > @as(f32, @floatFromInt(self.window_height));
     }
 
     pub fn handleResize(self: *Self, width: i32, height: i32) void {
         self.window_width = width;
         self.window_height = height;
-        self.calculateLayout();
+
+        if (self.is_user_zoomed) {
+            // Preserve user zoom, just update offsets
+            self.updateOffsets();
+        } else {
+            // Recalculate fit scale
+            self.calculateLayout();
+        }
     }
 
     pub fn screenToImage(self: Self, screen_x: i32, screen_y: i32) struct { x: i32, y: i32 } {
@@ -317,6 +438,7 @@ pub const Key = enum {
     enter,
     escape,
     r,
+    zero,
     unknown,
 
     pub fn fromSDL(scancode: c.SDL_Scancode) Key {
@@ -324,6 +446,7 @@ pub const Key = enum {
             c.SDL_SCANCODE_RETURN, c.SDL_SCANCODE_KP_ENTER => .enter,
             c.SDL_SCANCODE_ESCAPE => .escape,
             c.SDL_SCANCODE_R => .r,
+            c.SDL_SCANCODE_0, c.SDL_SCANCODE_KP_0 => .zero,
             else => .unknown,
         };
     }
@@ -335,6 +458,7 @@ pub const InputEvent = union(enum) {
     mouse_down: struct { x: i32, y: i32, button: MouseButton },
     mouse_up: struct { x: i32, y: i32, button: MouseButton },
     mouse_move: struct { x: i32, y: i32 },
+    mouse_wheel: struct { x: i32, y: i32, delta_y: i32, ctrl: bool, shift: bool },
     window_resize: struct { width: i32, height: i32 },
     none,
 };
@@ -384,6 +508,27 @@ pub fn pollEvent() InputEvent {
                 .x = event.motion.x,
                 .y = event.motion.y,
             },
+        },
+        c.SDL_MOUSEWHEEL => blk: {
+            // Get current mouse position
+            var mx: c_int = 0;
+            var my: c_int = 0;
+            _ = c.SDL_GetMouseState(&mx, &my);
+
+            // Get modifier state
+            const mod_state = c.SDL_GetModState();
+            const ctrl = (mod_state & c.KMOD_CTRL) != 0;
+            const shift = (mod_state & c.KMOD_SHIFT) != 0;
+
+            break :blk InputEvent{
+                .mouse_wheel = .{
+                    .x = mx,
+                    .y = my,
+                    .delta_y = event.wheel.y,
+                    .ctrl = ctrl,
+                    .shift = shift,
+                },
+            };
         },
         c.SDL_WINDOWEVENT => blk: {
             if (event.window.event == c.SDL_WINDOWEVENT_RESIZED or

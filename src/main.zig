@@ -166,10 +166,14 @@ pub fn main() !void {
             \\Usage: zcrop <image_file>
             \\
             \\Controls:
-            \\  Mouse drag    - Draw/resize crop area
-            \\  Enter         - Crop and save
-            \\  R             - Reset crop to full image
-            \\  Escape        - Quit without saving
+            \\  Mouse drag       - Draw/resize crop area
+            \\  Ctrl + Scroll    - Zoom in/out at cursor
+            \\  Scroll           - Pan vertically (when zoomed)
+            \\  Shift + Scroll   - Pan horizontally (when zoomed)
+            \\  0                - Reset zoom to fit window
+            \\  Enter            - Crop and save
+            \\  R                - Reset crop to full image
+            \\  Escape           - Quit without saving
             \\
             \\Supported formats: PNG, JPEG, BMP
             \\
@@ -226,6 +230,9 @@ pub fn main() !void {
                         .r => {
                             state.resetCrop();
                         },
+                        .zero => {
+                            rend.resetZoom();
+                        },
                         else => {},
                     }
                 },
@@ -241,6 +248,20 @@ pub fn main() !void {
                 },
                 .mouse_move => |mouse| {
                     handleMouseMove(&state, &rend, mouse.x, mouse.y);
+                },
+                .mouse_wheel => |wheel| {
+                    if (wheel.ctrl) {
+                        // Ctrl+scroll = zoom at cursor
+                        rend.zoomAtPoint(wheel.x, wheel.y, wheel.delta_y > 0);
+                    } else if (rend.canPan()) {
+                        // Scroll = pan (when zoomed in)
+                        const pan_amount = Renderer.PAN_STEP * @as(f32, @floatFromInt(wheel.delta_y));
+                        if (wheel.shift) {
+                            rend.pan(-pan_amount, 0); // horizontal
+                        } else {
+                            rend.pan(0, -pan_amount); // vertical
+                        }
+                    }
                 },
                 .window_resize => |resize| {
                     rend.handleResize(resize.width, resize.height);

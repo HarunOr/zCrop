@@ -10,6 +10,8 @@ And C libraries. Ok, it's mostly C.
 
 - Load PNG, JPEG, and BMP images
 - Interactive crop rectangle with mouse drag-and-resize
+- Zoom in/out for precise cropping (Ctrl + scroll wheel)
+- Pan around zoomed images
 - Visual overlay showing crop region
 - Save cropped image to disk
 
@@ -67,6 +69,10 @@ zcrop image.png
 | **Mouse drag** | Draw a new crop rectangle or resize existing one |
 | **Drag inside** | Move the crop rectangle |
 | **Drag corners/edges** | Resize the crop rectangle |
+| **Ctrl + Scroll** | Zoom in/out at cursor position |
+| **Scroll** | Pan vertically (when zoomed in) |
+| **Shift + Scroll** | Pan horizontally (when zoomed in) |
+| **0** | Reset zoom to fit window |
 | **Enter** | Crop and save, then exit |
 | **R** | Reset crop to full image |
 | **Escape** | Quit without saving |
